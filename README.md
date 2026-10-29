@@ -6,6 +6,15 @@ A two-player card game of risk and reward, inspired by Reiner Knizia's *Lost Cit
 
 Double-click `index.html`. It opens in your web browser. Nothing needs to be installed.
 
+## Versions
+
+| Version | Published page | Saved copy | In git |
+|---|---|---|---|
+| 1 | [claude.ai/artifact/VkrmMfEm4K25VUdz2XsJRb](https://claude.ai/artifact/VkrmMfEm4K25VUdz2XsJRb) | `versions/v1/mythic-pacts-v1.html` (open it in any browser) | tag `v1` |
+| 2 | in progress | | branch `version-2` |
+
+The saved copy is the exact page published as version 1. The source code at the `v1` tag also includes the card-back art, which was added just after version 1 was published.
+
 ## The art
 
 The artwork lives in `art/` as the sheets made in ChatGPT:

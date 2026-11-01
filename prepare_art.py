@@ -36,6 +36,11 @@ BOARD_NAMES = ["gameboard", "game-board", "game_board", "board"]
 # Left-to-right order of the realms in your crystal sheet and your board image.
 CRYSTAL_ORDER = ["fairy", "siren", "dryad", "nymph", "angel"]
 BOARD_ORDER = ["fairy", "siren", "dryad", "angel", "nymph"]
+# The Angel and Nymph cards were redone in gold and lavender, but GameBoard.png still frames those two
+# portraits in purple and teal. Until it is redone too, recolour just the frame and the name banner:
+# realm -> (hue range to change, in degrees, new hue, saturation factor, brightness factor).
+# Delete an entry to keep the original.
+PORTRAIT_RECOLOR = {"angel": ((250, 325), 40, 0.95, 1.45), "nymph": ((145, 205), 266, 0.62, 1.12)}
 
 CARD_W, CARD_H = 320, 560        # every card is resized to this shape (height = 1.75 x width)
 PORTRAIT_W = 320                 # board portraits keep their own proportions
@@ -217,8 +222,35 @@ def slice_board(path, manifest):
         cw, ch = x1 - x0 - 2 * dx, y1 - y0 - 2 * dy
         dest = out / f"{realm}.jpg"
         export_jpeg(crop(rows, x0 + dx, y0 + dy, x1 - dx, y1 - dy), cw, ch, dest, (PORTRAIT_W, round(PORTRAIT_W * ch / cw)))
+        if realm in PORTRAIT_RECOLOR:
+            recolor_frame(dest, *PORTRAIT_RECOLOR[realm])
         manifest[f"realm-{realm}"] = f"assets/realms/{realm}.jpg"
     print(f"  {path.name}: 5 realm portraits")
+
+
+def recolor_frame(path, hues, new_hue, sat_factor, val_factor):
+    """Change the colour of a portrait's frame (the outer band) and its name banner (the bottom strip),
+    leaving the painting inside alone. Only strongly coloured pixels in the chosen hue range change."""
+    import colorsys
+    w, h, rows = load(path)
+    side, top, banner = max(6, w * 55 // 1000), max(10, w * 95 // 1000), h * 925 // 1000
+    lo, hi = hues
+    for y in range(h):
+        r = rows[y]
+        for x in range(w):
+            if not (x < side or x >= w - side or y < top or y >= banner):
+                continue
+            i = x * 3
+            hh, ss, vv = colorsys.rgb_to_hsv(r[i] / 255, r[i + 1] / 255, r[i + 2] / 255)
+            if ss < 0.2 or not lo <= hh * 360 <= hi:
+                continue
+            nr, ng, nb = colorsys.hsv_to_rgb(new_hue / 360, min(1, ss * sat_factor), min(1, vv * val_factor))
+            r[i], r[i + 1], r[i + 2] = int(nr * 255), int(ng * 255), int(nb * 255)
+    with tempfile.TemporaryDirectory() as t:
+        png = Path(t) / "r.png"
+        save_png(png, w, h, rows)
+        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "82", str(png), "--out", str(path)],
+                       check=True, capture_output=True)
 
 
 def slice_crystals(path, manifest):
@@ -299,6 +331,23 @@ def single_images(manifest):
                 manifest[key] = f"art/{p.name}"
 
 
+# The page backdrop. Two options were made; backdrop2 (dark linen, gold moons and stars) suits the
+# game's dark table and gold card back, so it wins unless a file called simply "backdrop" exists.
+BACKDROP_NAMES = ["backdrop", "backdrop2"]
+
+
+def backdrop(manifest):
+    p = next((f for name in BACKDROP_NAMES for f in sorted(ART.glob("*")) if f.stem.lower() == name), None)
+    if not p:
+        return
+    ASSETS.mkdir(exist_ok=True)
+    dest = ASSETS / "backdrop.jpg"
+    subprocess.run(["sips", "-Z", "1920", "-s", "format", "jpeg", "-s", "formatOptions", "80", str(p), "--out", str(dest)],
+                   check=True, capture_output=True)
+    manifest["backdrop"] = "assets/backdrop.jpg"
+    print(f"  {p.name}: page backdrop")
+
+
 def main():
     if not ART.exists():
         print("No art/ folder yet.")
@@ -313,6 +362,7 @@ def main():
     p = find_file(BOARD_NAMES)
     if p: slice_board(p, manifest)
     single_images(manifest)
+    backdrop(manifest)
     ASSETS.mkdir(exist_ok=True)
     (ASSETS / "art.js").write_text("// Written by prepare_art.py. Lists the artwork the game should use.\n"
                                    f"window.ART_FILES = {json.dumps(manifest, indent=1)};\n", encoding="utf-8")

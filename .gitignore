@@ -6,3 +6,6 @@ __pycache__/
 
 # Packaged single-file builds (recreate with: python3 build.py)
 dist/
+
+# Temporary in-browser test tools
+.sim/

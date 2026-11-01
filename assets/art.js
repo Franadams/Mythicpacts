@@ -60,5 +60,6 @@ window.ART_FILES = {
  "realm-dryad": "assets/realms/dryad.jpg",
  "realm-angel": "assets/realms/angel.jpg",
  "realm-nymph": "assets/realms/nymph.jpg",
- "card-back": "art/card-back.png"
+ "card-back": "art/card-back.png",
+ "backdrop": "assets/backdrop.jpg"
 };

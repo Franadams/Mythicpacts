@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack the game and your art into one self-contained file: dist/mythic-pacts.html
+"""Pack the game (index.html plus src/) and your art into one self-contained file: dist/mythic-pacts.html
 
 Run from Terminal:  python3 build.py
 
@@ -24,6 +24,13 @@ PUBLISH = ROOT / "dist" / "publish.html"
 PREAMBLE_END = "<!-- /local-preamble -->"
 ART_TAG = '<script src="assets/art.js"></script>'
 MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+INLINE = [
+    ('<link rel="stylesheet" href="src/styles.css">', "src/styles.css", "style"),
+    ('<script src="src/engine.js"></script>', "src/engine.js", "script"),
+    ('<script src="src/online.js"></script>', "src/online.js", "script"),
+    ('<script src="src/sound.js"></script>', "src/sound.js", "script"),
+    ('<script src="src/ui.js"></script>', "src/ui.js", "script"),
+]
 
 
 def data_uri(path, key, tmp):
@@ -48,6 +55,15 @@ def main():
         for key, rel in manifest.items():
             embedded[key] = data_uri(ROOT / rel, key, pathlib.Path(t))
     html = html.replace(ART_TAG, f"<script>window.ART_FILES = {json.dumps(embedded)};</script>", 1)
+
+    # Put the stylesheet and scripts from src/ inside the page too.
+    for tag, path, wrap in INLINE:
+        if tag not in html:
+            sys.exit(f"index.html no longer contains {tag}")
+        code = (ROOT / path).read_text(encoding="utf-8")
+        if wrap == "script" and "</script" in code:
+            sys.exit(f"{path} contains '</script', which would end the inlined script early.")
+        html = html.replace(tag, f"<{wrap}>\n{code}</{wrap}>", 1)
 
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(html, encoding="utf-8")

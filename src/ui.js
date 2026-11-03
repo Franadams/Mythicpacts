@@ -31,13 +31,17 @@ const CRYSTAL_SVG = '<svg viewBox="0 0 40 56" aria-hidden="true">'
   + '</svg>';
 
 const ADVISOR_SAMPLES = 200;
-const ORACLE_SAMPLES = 80;
+// The computer opponent, the Seer: like the Oracle it deals 80 possible worlds and tries every move in each,
+// but plays each future only 8 decisions ahead and lets the neural network in nn/net.js judge where it got to.
+const SEER_SAMPLES = 80;
+const SEER_DEPTH = 8;
+const SEER_NET = loadSeerNet();
 const SAVE_KEY = 'mythic-pacts:v3';
 const ONLINE_KEY = 'mythic-pacts:online';
-const PROFILE_KEY = 'mythic-pacts:profile';   // what the Oracle has learned about this player's habits
+const PROFILE_KEY = 'mythic-pacts:profile';   // what the Seer has learned about this player's habits
 const RECORDS_KEY = 'mythic-pacts:games';     // finished rounds against the computer, move by move
-// Which Oracle played a recorded game, so games can be compared across versions.
-const ENGINE_VERSION = 'oracle-2026-11-01-keepnext';
+// Which engine played a recorded game, so games can be compared across versions.
+const ENGINE_VERSION = SEER_NET ? 'seer-v5-2026-11-03' : 'oracle-2026-11-01-keepnext';
 const PID_KEY = 'mythic-pacts:pid';
 // Online play for two devices is built (src/online.js) but switched off for now.
 const ONLINE_ENABLED = false;
@@ -216,7 +220,7 @@ function renderSeat() {
 }
 
 function studiedNote() {
-  if (isOnline() || ui.match.skill !== 'oracle') return '';
+  if (isOnline() || ui.match.skill !== 'seer') return '';
   const n = loadProfile().rounds;
   return n ? `has studied ${plural(n, 'round')} of yours` : 'learns your habits as you play';
 }
@@ -323,7 +327,7 @@ function renderPrompt() {
     if (ui.match.scored === ui.match.round) acts = '<button type="button" class="act primary" data-act="results">See results</button>';
   }
   else if (!ui.running) text = 'Choose how to play from the menu.';
-  else if (ui.busy) text = `${nm(op)} is ${ui.match.skill === 'oracle' ? 'simulating possible endings' : 'thinking'}<span class="thinking"><i></i><i></i><i></i></span>`;
+  else if (ui.busy) text = `${nm(op)} is ${ui.match.skill === 'seer' ? 'looking into possible futures' : 'thinking'}<span class="thinking"><i></i><i></i><i></i></span>`;
   else if (myTurnState()) {
     steps = `<span class="steps"><span class="step ${st.phase === 'play' ? 'on' : 'done'}">1 · Play or discard</span><span class="step ${st.phase === 'draw' ? 'on' : ''}">2 · Draw</span></span>`;
     if (st.phase === 'play') {
@@ -493,7 +497,8 @@ const METHOD_HTML = '<p><strong>Card count.</strong> Any card that isn’t in yo
   + '<p><strong>Safe moves first.</strong> A discard your opponent could put straight onto one of their lines is only recommended when it beats the best safe move by at least 3 points and by more than twice the margin of error; one that could help them start a new line must win by 1.5 points. Throwing away a card your own line could still use must win by at least half the points it is worth there, because your opponent will often take it to deny you, and the next card for one of your lines, with nothing in between left to wait for, is never thrown away: playing it can only add points. The advice also stays with the rules-of-thumb move unless another move is clearly better, because chasing the highest noisy average picks lucky moves, not good ones.</p>'
   + '<p><strong>Starting a new line.</strong> A new line costs 20 points, so the advice only starts one the rules of thumb would not when it wins clearly: by more in a realm your opponent is already collecting, because they hold many of its cards.</p>'
   + '<p><strong>Waiting for low cards.</strong> Playing a card that jumps over lower ones you could still play (opening a line with a 7 early in the round, say) must win by half the points those lower cards are expected to be worth. Late in the round that expectation is small, so the jump becomes fine.</p>'
-  + '<p><strong>Learning your habits.</strong> After each round against the Oracle, it looks back at what you were really holding at each of its decisions and compares that with what it expected. Over a few rounds it learns, for example, whether you hold on to high cards or Pacts, and leans its simulated deals that way. It never uses your hidden cards in the round being played.</p>';
+  + `<p><strong>The Seer.</strong> The stronger computer opponent works like the Best move advice above, with ${SEER_SAMPLES} deals, but plays each future only ${SEER_DEPTH} decisions ahead (about two turns each). Then a neural network, trained on 24,000 games, judges who is ahead and by how much. The same safe-move rules pick its move, anchored on the network’s own choice. In testing it beat the Oracle, the opponent in version 2, by about 11 points a round.</p>`
+  + '<p><strong>Learning your habits.</strong> After each round against the Seer, it looks back at what you were really holding at each of its decisions and compares that with what it expected. Over a few rounds it learns, for example, whether you hold on to high cards or Pacts, and leans its simulated deals that way. It never uses your hidden cards in the round being played.</p>';
 
 function insightHTML(c, states) {
   const st = ui.st, me = ui.me, op = me ^ 1;
@@ -536,11 +541,21 @@ function updateProgress() {
 }
 
 /* ---------- simulation runner (keeps the page responsive) ---------- */
+// The Seer's network (nn/seer-weights.js). Without it the computer opponent falls back to the Oracle's search.
+function loadSeerNet() {
+  try { return typeof netFromJSON === 'function' && typeof SEER_WEIGHTS !== 'undefined' ? netFromJSON(SEER_WEIGHTS) : null; }
+  catch (e) { return null; }
+}
+
 let job = null;
-function runAnalysis(st, p, samples, onProgress, settings) {
+// seer: search as the Seer (the network judges each future) instead of playing every future to the end.
+function runAnalysis(st, p, samples, onProgress, settings, seer = false) {
   if (job) job.cancelled = true;
   const mine = job = { cancelled: false };
-  const gen = analyze(cloneState(st), p, samples, (Math.random() * 4294967296) >>> 0, settings);
+  const seed = (Math.random() * 4294967296) >>> 0;
+  const gen = seer && SEER_NET
+    ? netAnalyze(SEER_NET, cloneState(st), p, samples, seed, SEER_DEPTH, Object.assign({ advice: 'net' }, settings))
+    : analyze(cloneState(st), p, samples, seed, settings);
   return new Promise(resolve => {
     function step() {
       if (mine.cancelled) return resolve(null);
@@ -687,11 +702,11 @@ function newMatch(opts, start) {
   startRound();
 }
 
-/* ---------- the Oracle learns your habits ----------
-   During a round against the Oracle, each of its decisions is noted (what it could see, and what you
+/* ---------- the Seer learns your habits ----------
+   During a round against the Seer, each of its decisions is noted (what it could see, and what you
    were really holding). Only when the round is over is that added to what it has learned, so the
    round being played never uses your hidden cards. Kept in this browser. */
-const learningOn = () => typeof studyDecision === 'function' && !isOnline() && ui.match.skill === 'oracle';
+const learningOn = () => typeof studyDecision === 'function' && !isOnline() && ui.match.skill === 'seer';
 
 function loadProfile() {
   try {
@@ -700,7 +715,7 @@ function loadProfile() {
   } catch (e) { /* storage unavailable */ }
   return { v: 1, rounds: 0, study: typeof emptyStudy === 'function' ? emptyStudy() : null };
 }
-function oracleSettings() {
+function learnedSettings() {
   const prof = loadProfile();
   return prof.rounds > 0 && prof.study && typeof personalWeights === 'function' ? { handWeights: personalWeights(prof.study) } : {};
 }
@@ -717,7 +732,7 @@ function learnFromRound() {
 /* ---------- your games against the computer ----------
    Each finished round is kept move by move: the deal, every play, discard and draw, and the scores.
    They are saved in this browser and, on the published page, in the page's own storage, which only
-   the page's owner can read or write. Played back, they show where the Oracle loses points against you. */
+   the page's owner can read or write. Played back, they show where the computer loses points against you. */
 const store = { db: null, remote: [] };
 
 async function initStore() {
@@ -735,7 +750,7 @@ function startRecord() {
   return {
     v: 1, id: `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, engine: ENGINE_VERSION,
     skill: m.skill, rounds: m.rounds, round: m.round, humanSeat: ui.me, first: st.turn, startedAt: Date.now(),
-    studied: m.skill === 'oracle' ? loadProfile().rounds : 0,
+    studied: m.skill === 'seer' ? loadProfile().rounds : 0,
     hands: [st.hands[0].slice(), st.hands[1].slice()], deck: st.deck.slice(), moves: [],
   };
 }
@@ -776,7 +791,7 @@ function scoreboard(skill) {
 function scoreboardLine(skill) {
   const b = scoreboard(skill);
   if (!b) return '';
-  const who = skill === 'oracle' ? 'the Oracle' : 'the Apprentice';
+  const who = skill === 'seer' ? 'the Seer' : skill === 'oracle' ? 'the Oracle' : 'the Apprentice';
   return `Your rounds against ${who}: won ${b.won}, lost ${b.lost}${b.n - b.won - b.lost ? `, tied ${b.n - b.won - b.lost}` : ''} (average margin ${signed(b.avg, 1)} for you).`;
 }
 
@@ -785,7 +800,7 @@ function startRound() {
   const m = ui.match;
   ui.st = newRound(m.first, makeRng((Math.random() * 4294967296) >>> 0));
   ui.roundStudy = learningOn() ? emptyStudy() : null;
-  ui.oracleSettings = learningOn() ? oracleSettings() : {};
+  ui.aiSettings = learningOn() ? learnedSettings() : {};
   ui.record = ui.running && !isOnline() ? startRecord() : null;
   ui.selected = null;
   ui.analysis = null;
@@ -858,7 +873,7 @@ async function drawCard(p, src) {
 }
 
 async function aiTurn() {
-  const gen = ui.gen, st = ui.st, ai = st.turn, oracle = ui.match.skill === 'oracle';
+  const gen = ui.gen, st = ui.st, ai = st.turn, seer = ui.match.skill === 'seer';
   ui.busy = true;
   renderPrompt();
   await wait(450);
@@ -866,7 +881,7 @@ async function aiTurn() {
 
   if (st.phase === 'play') {
     if (ui.roundStudy) studyDecision(ui.roundStudy, st, ai);
-    let move = oracle ? (await runAnalysis(st, ai, ORACLE_SAMPLES, null, ui.oracleSettings))?.best : null;
+    let move = seer ? (await runAnalysis(st, ai, SEER_SAMPLES, null, ui.aiSettings, true))?.best : null;
     if (gen !== ui.gen) return;
     if (!move) move = heuristicMove(st, Math.random, 0);
     ui.busy = false;
@@ -878,7 +893,7 @@ async function aiTurn() {
     if (gen !== ui.gen) return;
   }
 
-  let src = oracle ? (await runAnalysis(st, ai, ORACLE_SAMPLES, null, ui.oracleSettings))?.best?.src : null;
+  let src = seer ? (await runAnalysis(st, ai, SEER_SAMPLES, null, ui.aiSettings, true))?.best?.src : null;
   if (gen !== ui.gen) return;
   if (src == null) src = heuristicDraw(st, Math.random, 0);
   ui.busy = false;
@@ -1187,7 +1202,7 @@ function showMenu(error) {
       <h2 class="title" id="dlgTitle">Mythic Pacts</h2>
       <p class="lede">Lead the Fairies, Sirens, Dryads, Angels and Nymphs. Every line you start costs 20 points, Pacts multiply the result, and a line of 8 cards earns a crystal worth 20 more.</p>
       ${realmRow()}
-      ${scoreboardLine('oracle') ? `<p class="quiet small">${scoreboardLine('oracle')}</p>` : ''}
+      ${scoreboardLine('seer') ? `<p class="quiet small">${scoreboardLine('seer')}</p>` : ''}
     </div>
     <form class="menu-form" id="menuForm" novalidate>
       <fieldset ${ONLINE_ENABLED ? '' : 'hidden'}>
@@ -1201,7 +1216,7 @@ function showMenu(error) {
         <legend>Computer skill</legend>
         <div class="seg">
           <label><input type="radio" name="skill" id="skillApprentice" value="apprentice" ${m.skill === 'apprentice' ? 'checked' : ''}><span><b>Apprentice</b><small>Plays by rules of thumb</small></span></label>
-          <label><input type="radio" name="skill" id="skillOracle" value="oracle" ${m.skill !== 'apprentice' ? 'checked' : ''}><span><b>Oracle</b><small>Simulates ${ORACLE_SAMPLES} possible endings before each move, and learns your habits</small></span></label>
+          <label><input type="radio" name="skill" id="skillSeer" value="seer" ${m.skill !== 'apprentice' ? 'checked' : ''}><span><b>Seer</b><small>Looks into ${SEER_SAMPLES} possible futures, judged by a neural network, and learns your habits</small></span></label>
         </div>
       </fieldset>
       <fieldset id="onlineSet">
@@ -1230,7 +1245,7 @@ function showMenu(error) {
         ${inOnlineGame ? '<button type="button" class="act" data-dlg="close">Back to the online game</button>' : ''}
         ${savedOnline ? `<button type="button" class="act" data-dlg="rejoin" ${onlineAvailable() ? '' : 'disabled'}>Rejoin online game ${escapeHTML(String(savedOnline.code || '').toUpperCase())}</button>` : ''}
         <button type="button" class="act ghost" data-dlg="rules">How to play</button>
-        ${loadProfile().rounds ? `<button type="button" class="act ghost" data-dlg="forget">Make the Oracle forget your ${plural(loadProfile().rounds, 'round')}</button>` : ''}
+        ${loadProfile().rounds ? `<button type="button" class="act ghost" data-dlg="forget">Make the Seer forget your ${plural(loadProfile().rounds, 'round')}</button>` : ''}
       </div>
       ${inOnlineGame ? '<p class="quiet small">Starting a new game leaves the online game.</p>' : ''}
     </form>
@@ -1246,7 +1261,7 @@ function showMenu(error) {
     if (!ONLINE_ENABLED || form.mode.value === 'ai') {
       leaveOnline();
       closeDialog();
-      newMatch({ skill: form.skill.value, rounds, names: [name || 'You', form.skill.value === 'oracle' ? 'Oracle' : 'Apprentice'] }, true);
+      newMatch({ skill: form.skill.value, rounds, names: [name || 'You', form.skill.value === 'seer' ? 'Seer' : 'Apprentice'] }, true);
       return;
     }
     if (!onlineAvailable()) return;
@@ -1414,6 +1429,12 @@ function loadSaved() {
 }
 function restore(s) {
   ui.match = s.match;
+  // A game saved by version 2 was against the Oracle; the Seer has taken its place.
+  if (ui.match.skill === 'oracle') {
+    ui.match.skill = 'seer';
+    if (ui.match.names[1] === 'Oracle') ui.match.names[1] = 'Seer';
+  }
+  ui.aiSettings = learningOn() ? learnedSettings() : {};
   ui.st = s.st;
   ui.log = s.log || [];
   ui.showOdds = s.showOdds !== false;
@@ -1617,8 +1638,8 @@ $('#dialog').addEventListener('click', e => {
   else if (a === 'leave-online') { leaveOnline(); showMenu(); }
   else if (a === 'forget') {
     try { localStorage.removeItem(PROFILE_KEY); } catch (e) { /* storage unavailable */ }
-    ui.oracleSettings = {};
-    toast('The Oracle has forgotten what it learned about your play.');
+    ui.aiSettings = {};
+    toast('The Seer has forgotten what it learned about your play.');
     showMenu();
   }
 });
@@ -1691,7 +1712,7 @@ function boot(data) {
   const hot = data && data.st && data.match ? data : null;
   const saved = hot && hot.match.mode === 'ai' ? hot : loadSaved();
   if (saved) restore(saved);
-  else newMatch({ skill: 'oracle', rounds: 3, names: ['You', 'Oracle'] }, false);
+  else newMatch({ skill: 'seer', rounds: 3, names: ['You', 'Seer'] }, false);
   render();
   if (ONLINE_ENABLED && hot && hot.match.mode === 'online' && loadOnline()) net.resumeOnReady = true;   // refreshed mid-game: rejoin quietly
   else if (hot && hot.running && saved) continueGame();

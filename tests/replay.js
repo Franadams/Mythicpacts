@@ -1,4 +1,5 @@
-/* Replay recorded games against the Oracle and measure its decisions.
+/* Replay recorded games against the computer and measure its decisions: the Oracle's (version 2) or the
+   Seer's (version 3). Each record says which played it; skill=seer or skill=oracle keeps only those games.
 
    Recorded games come from the published page (the page saves each finished round to its own storage)
    or from a browser's localStorage. Put them in a JSON file as an array of records, then run:
@@ -8,7 +9,7 @@
      $JSC src/engine.js tests/replay.js -- games=games.json candidate=path/to/other_engine.js
      $JSC src/engine.js tests/replay.js -- games=games.json json=decisions.json   (every decision, for analysis)
 
-   For every Oracle decision (play or discard) it:
+   For every computer decision (play or discard) it:
    - checks the replay matches the recording exactly;
    - scores each legal move with hindsight of the opponent's real hand (the deck order is reshuffled, so
      it does not know the future): the average final lead over `samples` simulated endings;
@@ -31,6 +32,7 @@ for (const a of (typeof arguments !== 'undefined' ? arguments : [])) {
 }
 const records = JSON.parse(readFile(args.games));
 const SAMPLES = +(args.samples || 300), ADVICE = +(args.advice || 80);
+const SKILLS = (args.skill || 'oracle,seer').split(',');
 const name = c => ['Fairy', 'Siren', 'Dryad', 'Angel', 'Nymph'][realmOf(c)] + ' ' + (valueOf(c) || 'Pact');
 const moveName = m => (m.type === 'play' ? 'play ' : 'discard ') + name(m.card);
 
@@ -76,7 +78,7 @@ const same = (a, b) => a.type === b.type && realmOf(a.card) === realmOf(b.card) 
 let decisions = 0, regretOracle = 0, upperOracle = 0, regretCandidate = 0, rounds = 0, humanLead = 0;
 const worst = [];
 for (const rec of records) {
-  if (!rec || rec.skill !== 'oracle' || !Array.isArray(rec.moves)) continue;
+  if (!rec || !SKILLS.includes(rec.skill) || !Array.isArray(rec.moves)) continue;
   const st = startState(rec), oracleSeat = rec.humanSeat ^ 1;
   rounds++;
   for (const mv of rec.moves) {
@@ -119,9 +121,9 @@ for (const rec of records) {
 }
 
 if (args.json) writeFile(args.json, JSON.stringify(worst));
-print(`${rounds} recorded rounds against the Oracle; average margin for the human ${(humanLead / Math.max(1, rounds)).toFixed(1)}`);
-print(`${decisions} Oracle decisions, each scored with ${SAMPLES} simulated endings knowing the opponent's hand`);
-print(`  points lost per decision by the Oracle that played: between ${(regretOracle / Math.max(1, decisions)).toFixed(2)} (cross-fitted, errs low) and ${(upperOracle / Math.max(1, decisions)).toFixed(2)} (plain maximum, errs high)`);
+print(`${rounds} recorded rounds against the ${SKILLS.join(' or ')}; average margin for the human ${(humanLead / Math.max(1, rounds)).toFixed(1)}`);
+print(`${decisions} computer decisions, each scored with ${SAMPLES} simulated endings knowing the opponent's hand`);
+print(`  points lost per decision by the engine that played: between ${(regretOracle / Math.max(1, decisions)).toFixed(2)} (cross-fitted, errs low) and ${(upperOracle / Math.max(1, decisions)).toFixed(2)} (plain maximum, errs high)`);
 if (candidate) print(`  average points lost per decision by ${args.candidate.split('/').pop()}: ${(regretCandidate / Math.max(1, decisions)).toFixed(2)}`);
-print('  costliest Oracle decisions:');
+print('  costliest computer decisions:');
 for (const w of worst.sort((a, b) => b.cost - a.cost).slice(0, 8)) print(`    ${w.game} (deck ${w.deck}): chose ${w.chose}, hindsight prefers ${w.better}, about ${w.cost.toFixed(1)} points`);

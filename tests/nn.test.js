@@ -199,5 +199,16 @@ function midGame(seed, turns) {
   ok(threw, 'weights trained on other features are refused');
 }
 
+// ---- the network the game plays with ----
+{
+  // nn/seer-weights.js is the copy of nn/v5.json the page loads (build.py writes it); a stale copy would
+  // quietly play an older network.
+  eq(JSON.stringify(SEER_WEIGHTS), JSON.stringify(JSON.parse(readFile('nn/v5.json'))), "the game's copy of the network matches nn/v5.json");
+  const net = netFromJSON(SEER_WEIGHTS), st = midGame(81, 8);
+  const res = (() => { const g = netAnalyze(net, cloneState(st), st.turn, 80, 3, 8, { advice: 'net' }); let x; while (!(x = g.next()).done); return x.value; })();
+  ok(legalMoves(st).some(m => m.type === res.best.type && m.card === res.best.card), 'the Seer as the game runs it plays a legal move');
+  ok(res.options.length === legalMoves(st).length, 'and weighs every legal move');
+}
+
 print(failures ? `${failures} test(s) failed` : 'All neural-network tests passed');
 if (failures) throw new Error('tests failed');   // non-zero exit for run.sh

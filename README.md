@@ -16,6 +16,13 @@ Double-click `index.html`. It opens in your web browser. Nothing needs to be ins
 |---|---|---|---|
 | 1 | [claude.ai/artifact/VkrmMfEm4K25VUdz2XsJRb](https://claude.ai/artifact/VkrmMfEm4K25VUdz2XsJRb) | `versions/v1/mythic-pacts-v1.html` (open it in any browser) | tag `v1` |
 | 2 | [claude.ai/artifact/S2cQ7jYQgJ8x6naNGGWhrz](https://claude.ai/artifact/S2cQ7jYQgJ8x6naNGGWhrz) | | branch `version-2` |
+| 3 | [claude.ai/artifact/6XNcL3kBMJ8rccLZ6oCK2V](https://claude.ai/artifact/6XNcL3kBMJ8rccLZ6oCK2V) | | branch `version-3` |
+
+What's new in version 3:
+- The computer opponent is now the **Seer**, which replaces the Oracle. It searches like the Oracle (80 possible deals, every move tried in each), but plays each future only 8 decisions ahead and lets a small neural network, trained on 24,000 games, judge who is ahead. It keeps the Oracle's safe-move rules and still learns your habits. How it was built is described in *The Seer's neural network* below.
+- In testing the Seer beat the Oracle in 61% of 1,000 games, by 10.8 ± 1.1 points a round, and beat an Oracle doing four times the work by 5.2 ± 1.3. It also decides faster than the Oracle: about 8 ms a decision against 13 ms on a Mac.
+- The Odds panel's Best move advice works as before (the Oracle's method, with 200 deals).
+- On your own computer (`index.html`), a game saved by version 2 continues against the Seer. The published version 3 page is a new page, so it starts fresh: no saved game, no learned habits, an empty scoreboard. The scoreboard counts rounds against the Seer on their own.
 
 What's new in version 2:
 - You drag cards onto the table; the Play and Discard buttons are gone.
@@ -38,9 +45,9 @@ What's new in version 2:
 | `src/sound.js` | The sound effects, synthesised with the Web Audio API. |
 | `src/online.js` | Online play for two devices (switched off for now). |
 | `tests/` | Tests you can run with `tests/run.sh` (no installs: it uses macOS's built-in JavaScriptCore), plus `calibrate.js` and `benchmark.js` for the measurements below. |
-| `nn/` | The neural-network experiment (not in the game yet): `net.js` (the network, its players and the Seer), `selfplay.js` (training games), `train.js`, and the trained weights `v2s1.json` (called v2 below), `v3.json`, `v4.json` and `v5.json` (v5 is the strongest). Training games, logs and test results go in `nn/data/`, which is not in git. See *The neural network* below. |
+| `nn/` | The Seer's neural network: `net.js` (the network, its players and the Seer; the game loads it), `seer-weights.js` (the network the game plays with, a copy of `v5.json` that `build.py` writes), `selfplay.js` (training games), `train.js`, and the trained weights `v2s1.json` (called v2 below), `v3.json`, `v4.json` and `v5.json` (v5 is the strongest). Training games, logs and test results go in `nn/data/`, which is not in git. See *The Seer's neural network* below. |
 | `prepare_art.py` | Cuts the art sheets in `art/` into cards, crystals and portraits in `assets/`. |
-| `build.py` | Packs everything into one self-contained file, `dist/mythic-pacts.html` (about 7 MB). |
+| `build.py` | Packs everything into one self-contained file, `dist/mythic-pacts.html` (about 8 MB). |
 
 ## The art
 
@@ -63,7 +70,7 @@ To make the shareable single file, run `python3 build.py`.
 
 **Apprentice (rules of thumb).** It plays the lowest card that fits a line, avoids skipping cards that could still turn up, only starts a line when its cards are likely to cover the 20-point cost, and avoids discarding cards its opponent could use. It sees only what a human player would see.
 
-**Oracle (Monte Carlo simulation).** On every decision it:
+**Oracle (Monte Carlo simulation).** The computer opponent in versions 1 and 2, and still the method behind the Odds panel's advice. On every decision it:
 1. **Deals a possible world.** The cards it hasn't seen are split between the opponent's hidden hand and the deck. The split leans on what the opponent's play has revealed (see *Reading the opponent*).
 2. **Plays every legal move to the end of the round** in that world, with the Apprentice strategy on both sides, and records the final lead.
 3. **Repeats this for 80 worlds** (200 for the Odds panel). Every move is tested on the same worlds (*common random numbers*), so the comparison measures the move, not the luck of the deal.
@@ -74,11 +81,13 @@ To make the shareable single file, run `python3 build.py`.
    - Jumping over lower cards it could still play (opening a line with a 7 early in the round, say) must win by half the points those lower cards are expected to be worth: a lower card in hand is lost for sure, an unseen one only might arrive in time. Late in the round that expectation is small, so the jump becomes fine.
    - Otherwise the rules-of-thumb move stays unless another move beats it by more than one standard error. Picking the highest noisy average chases luck, not skill.
 
+**Seer (version 3's opponent).** The Oracle's search with a neural network inside it: the same deals and the same cautious decision rule, but each simulated future stops after 8 decisions and the network judges where it got to, instead of the rules of thumb playing on to the end. See *The Seer's neural network* below.
+
 **Reading the opponent.** Players keep cards that fit their lines and throw away the ones they can't use, so the table gives clues. Each unseen card is sorted by public information only (the lines, the discard piles, cards the opponent visibly took, and how many cards are left), and the opponent's hand is dealt with matching weights. The weights were fitted with `tests/calibrate.js` on 5,280 simulated games (628,104 decisions, 18.6 million observations of an unseen card). For example, a card well above the top of a line they've started is about 3 times as likely as average to be in their hand; one they can never play is about a quarter as likely. On 1,320 held-out games the weighted deal predicts the opponent's hand better than an even split (log-loss 0.502 vs 0.532 nats per card), and the share of each kind of card it deals them matches the truth within 2 percentage points.
 
-**Learning your habits.** After each round against the Oracle, it looks back at every decision it made: which unseen cards were you really holding, compared with what its model expected? Counted per kind of card, that shows whether you hold on to, say, high cards or Pacts more than the model assumes, and its simulated deals lean that way next time (shrunk towards the population model until there is enough evidence). It only learns from finished rounds, so it never uses your hidden cards in the round being played. What it learns is kept in your browser, and the menu has a button to make it forget. In tests against simulated players, after 30 rounds of study it predicted the hidden hand of a player who hoards high cards 2.0–2.6% better (log-loss on held-out rounds) and of a typical player 0.4–0.9% better; it was never worse.
+**Learning your habits.** After each round against the Seer (the Oracle in version 2), it looks back at every decision it made: which unseen cards were you really holding, compared with what its model expected? Counted per kind of card, that shows whether you hold on to, say, high cards or Pacts more than the model assumes, and its simulated deals lean that way next time (shrunk towards the population model until there is enough evidence). It only learns from finished rounds, so it never uses your hidden cards in the round being played. What it learns is kept in your browser, and the menu has a button to make it forget. In tests against simulated players, after 30 rounds of study it predicted the hidden hand of a player who hoards high cards 2.0–2.6% better (log-loss on held-out rounds) and of a typical player 0.4–0.9% better; it was never worse.
 
-**Measured against your games.** Every round you finish against the computer is recorded move by move: the deal, every play, discard and draw, and the scores. Records are kept in your browser and, on the published page, in the page's own storage, which only the page's owner can read or write. The round-end screen and the menu show your record against the Oracle. `tests/replay.js` plays recorded rounds back and scores every Oracle decision against the alternatives, with hindsight of what you were really holding. That shows how many points each of its moves cost against you, and whether another version of the engine (`candidate=FILE`) would have done better in the same positions. Hindsight is only used to judge decisions afterwards, never to make them.
+**Measured against your games.** Every round you finish against the computer is recorded move by move: the deal, every play, discard and draw, and the scores. Records are kept in your browser and, on the published page, in the page's own storage, which only the page's owner can read or write. The round-end screen and the menu show your record against the Seer. `tests/replay.js` plays recorded rounds back and scores every decision the computer made against the alternatives, with hindsight of what you were really holding. That shows how many points each of its moves cost against you, and whether another version of the engine (`candidate=FILE`) would have done better in the same positions. Hindsight is only used to judge decisions afterwards, never to make them.
 
 **Why gifts matter.** In those simulations, when a player discarded a card that fit a line the opponent had started, the opponent took it and finished the round with it on a line 59% of the time against the Apprentice and 67% against the Oracle. Early-round discards that could start a new line for them were used 36% and 52% of the time.
 
@@ -104,19 +113,19 @@ To make the shareable single file, run `python3 build.py`.
 **The Odds panel** uses the same engine for the human player:
 - *Card count:* which cards are still unseen, in your hand, or on top of a discard pile.
 - *Chance a card reaches you:* you draw about half of the remaining deck, so each unseen card's chance is your draws divided by the number of hidden places. The chance of getting at least one of several cards comes from the hypergeometric distribution.
-- *Best move:* the average final lead for each move, its standard error, and a red "helps Oracle" tag on discards the opponent could use. When the advice passes over a higher-scoring move, it says why.
+- *Best move:* the average final lead for each move, its standard error, and a red "helps Seer" tag on discards the opponent could use. When the advice passes over a higher-scoring move, it says why.
 
 This is the same kind of reasoning used to price a sports market: count what you know, model what the other side's behaviour reveals, simulate what you don't know, and only act when the edge is bigger than the noise.
 
-## The neural network (experimental)
+## The Seer's neural network
 
-The Oracle plays every simulated future to the end with the rules of thumb. The question was whether a neural network, trained on the Oracle's own games, could judge positions better, and then play better.
+The Oracle plays every simulated future to the end with the rules of thumb. The question was whether a neural network, trained on the Oracle's own games, could judge positions better, and then play better. It could: the Seer, built on it, is the computer opponent in version 3.
 
 **What the network is.** A small network (about 17,000 weights, pure JavaScript, no GPU) that looks at the table from one player's side and predicts how far ahead that player will finish the round. It sees only what that player could see: where each card is (in its hand, on either player's lines, in a discard pile, unseen, or known to be in the opponent's hand because they took it from a pile), a few summary numbers per realm (line score, cards that still fit, cards left), and whose turn it is. The five realms are read by the same small sub-network and added up, because the realms are interchangeable; a pattern learned in one realm applies to all five.
 
 **How it plays.**
 - *On its own:* for each legal move it imagines the position afterwards and picks the one it rates highest. Well under a millisecond a move.
-- *The Seer:* the Oracle's search with the network inside it. Like the Oracle, it deals 80 possible worlds and tries every move in each, but each simulated future is cut short after 8 decisions (a play or a draw each, so about two turns per player) and the network judges where it got to. The Oracle's cautious decision rule then picks the move, anchored on the network's own choice. About as fast as the Oracle.
+- *The Seer:* the Oracle's search with the network inside it. Like the Oracle, it deals 80 possible worlds and tries every move in each, but each simulated future is cut short after 8 decisions (a play or a draw each, so about two turns per player) and the network judges where it got to. The Oracle's cautious decision rule then picks the move, anchored on the network's own choice. A little faster than the Oracle. This is the opponent the game plays with, using v5.
 
 **How it was trained** (`nn/selfplay.js`, `nn/train.js`):
 1. 10,000 Oracle-vs-Oracle games: 1.07 million positions. For every play or discard the Oracle considered, its estimate of the final lead was stored too (7.9 million estimates).

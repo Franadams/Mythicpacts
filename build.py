@@ -7,7 +7,8 @@ It first runs prepare_art.py (which cuts your sheets into cards, crystals and
 portraits), then puts every image inside the page itself, so the finished file
 works anywhere: as an email attachment or opened straight from a USB stick.
 It also writes dist/publish.html, the same page without its <head> lines,
-for hosting services that add their own.
+for hosting services that add their own, and refreshes nn/seer-weights.js
+(the computer opponent's neural network) from nn/v5.json.
 """
 import base64
 import json
@@ -22,11 +23,15 @@ ROOT = pathlib.Path(__file__).resolve().parent
 OUT = ROOT / "dist" / "mythic-pacts.html"
 PUBLISH = ROOT / "dist" / "publish.html"
 PREAMBLE_END = "<!-- /local-preamble -->"
+SEER_NET = ROOT / "nn" / "v5.json"            # the network the Seer plays with
+SEER_SCRIPT = ROOT / "nn" / "seer-weights.js"
 ART_TAG = '<script src="assets/art.js"></script>'
 MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 INLINE = [
     ('<link rel="stylesheet" href="src/styles.css">', "src/styles.css", "style"),
     ('<script src="src/engine.js"></script>', "src/engine.js", "script"),
+    ('<script src="nn/net.js"></script>', "nn/net.js", "script"),
+    ('<script src="nn/seer-weights.js"></script>', "nn/seer-weights.js", "script"),
     ('<script src="src/online.js"></script>', "src/online.js", "script"),
     ('<script src="src/sound.js"></script>', "src/sound.js", "script"),
     ('<script src="src/ui.js"></script>', "src/ui.js", "script"),
@@ -44,7 +49,17 @@ def data_uri(path, key, tmp):
     return f"data:{MIME.get(path.suffix.lower(), 'image/jpeg')};base64,{base64.b64encode(path.read_bytes()).decode()}"
 
 
+def write_seer_weights():
+    # The page can't read a .json file when opened straight from disk, so the network goes in a script.
+    weights = json.dumps(json.loads(SEER_NET.read_text(encoding="utf-8")), separators=(",", ":"))
+    SEER_SCRIPT.write_text(
+        f"/* The Seer's neural network: a copy of {SEER_NET.relative_to(ROOT)}, written by build.py so the game can load it\n"
+        "   straight from a file. After training a new network, point SEER_NET in build.py at it and run the build. */\n"
+        f"const SEER_WEIGHTS = {weights};\n", encoding="utf-8")
+
+
 def main():
+    write_seer_weights()
     manifest = prepare_art.main()
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     if ART_TAG not in html:

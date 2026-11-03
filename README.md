@@ -19,8 +19,8 @@ Double-click `index.html`. It opens in your web browser. Nothing needs to be ins
 | 3 | [claude.ai/artifact/6XNcL3kBMJ8rccLZ6oCK2V](https://claude.ai/artifact/6XNcL3kBMJ8rccLZ6oCK2V) | | branch `version-3` |
 
 What's new in version 3:
-- The computer opponent is now the **Seer**, which replaces the Oracle. It searches like the Oracle (80 possible deals, every move tried in each), but plays each future only 8 decisions ahead and lets a small neural network, trained on 24,000 games, judge who is ahead. It keeps the Oracle's safe-move rules and still learns your habits. How it was built is described in *The Seer's neural network* below.
-- In testing the Seer beat the Oracle in 61% of 1,000 games, by 10.8 ± 1.1 points a round, and beat an Oracle doing four times the work by 5.2 ± 1.3. It also decides faster than the Oracle: about 8 ms a decision against 13 ms on a Mac.
+- The computer opponent is now the **Seer**, which replaces the Oracle. It searches like the Oracle (80 possible deals, every move tried in each), but plays each future only 8 decisions ahead and lets a small neural network, trained on 24,000 games, judge who is ahead. It keeps the Oracle's safe-move rules, made stricter about throwing away cards its own lines could use, and still learns your habits. How it was built is described in *The Seer's neural network* below.
+- In testing the Seer beat the Oracle in 62% of 1,000 games, by 11.1 ± 1.1 points a round. Before the stricter discard rule, which made no measurable difference to its strength, it also beat an Oracle doing four times the work, by 5.2 ± 1.3. It also decides faster than the Oracle: about 8 ms a decision against 13 ms on a Mac.
 - The Odds panel's Best move advice works as before (the Oracle's method, with 200 deals).
 - On your own computer (`index.html`), a game saved by version 2 continues against the Seer. The published version 3 page is a new page, so it starts fresh: no saved game, no learned habits, an empty scoreboard. The scoreboard counts rounds against the Seer on their own.
 
@@ -81,7 +81,7 @@ To make the shareable single file, run `python3 build.py`.
    - Jumping over lower cards it could still play (opening a line with a 7 early in the round, say) must win by half the points those lower cards are expected to be worth: a lower card in hand is lost for sure, an unseen one only might arrive in time. Late in the round that expectation is small, so the jump becomes fine.
    - Otherwise the rules-of-thumb move stays unless another move beats it by more than one standard error. Picking the highest noisy average chases luck, not skill.
 
-**Seer (version 3's opponent).** The Oracle's search with a neural network inside it: the same deals and the same cautious decision rule, but each simulated future stops after 8 decisions and the network judges where it got to, instead of the rules of thumb playing on to the end. See *The Seer's neural network* below.
+**Seer (version 3's opponent).** The Oracle's search with a neural network inside it: the same deals and the same cautious decision rule (stricter about throwing away its own cards), but each simulated future stops after 8 decisions and the network judges where it got to, instead of the rules of thumb playing on to the end. See *The Seer's neural network* below.
 
 **Reading the opponent.** Players keep cards that fit their lines and throw away the ones they can't use, so the table gives clues. Each unseen card is sorted by public information only (the lines, the discard piles, cards the opponent visibly took, and how many cards are left), and the opponent's hand is dealt with matching weights. The weights were fitted with `tests/calibrate.js` on 5,280 simulated games (628,104 decisions, 18.6 million observations of an unseen card). For example, a card well above the top of a line they've started is about 3 times as likely as average to be in their hand; one they can never play is about a quarter as likely. On 1,320 held-out games the weighted deal predicts the opponent's hand better than an even split (log-loss 0.502 vs 0.532 nats per card), and the share of each kind of card it deals them matches the truth within 2 percentage points.
 
@@ -125,7 +125,7 @@ The Oracle plays every simulated future to the end with the rules of thumb. The 
 
 **How it plays.**
 - *On its own:* for each legal move it imagines the position afterwards and picks the one it rates highest. Well under a millisecond a move.
-- *The Seer:* the Oracle's search with the network inside it. Like the Oracle, it deals 80 possible worlds and tries every move in each, but each simulated future is cut short after 8 decisions (a play or a draw each, so about two turns per player) and the network judges where it got to. The Oracle's cautious decision rule then picks the move, anchored on the network's own choice. A little faster than the Oracle. This is the opponent the game plays with, using v5.
+- *The Seer:* the Oracle's search with the network inside it. Like the Oracle, it deals 80 possible worlds and tries every move in each, but each simulated future is cut short after 8 decisions (a play or a draw each, so about two turns per player) and the network judges where it got to. The Oracle's cautious decision rule then picks the move, anchored on the network's own choice and stricter about throwing away its own cards (see below). A little faster than the Oracle. This is the opponent the game plays with, using v5.
 
 **How it was trained** (`nn/selfplay.js`, `nn/train.js`):
 1. 10,000 Oracle-vs-Oracle games: 1.07 million positions. For every play or discard the Oracle considered, its estimate of the final lead was stored too (7.9 million estimates).
@@ -142,6 +142,7 @@ Each network trained for several passes over its games with 5% of the games held
 - *The Oracle's estimates run optimistic*, most likely because the opponents it imagines hold weaker hands than real ones keep. Its estimates came out higher than the real result by about 10 points through the middle of the round, peaking near 12 with 12 cards left, and by about 1 at the start and end. Training measures that gap for each number of cards left and takes it off.
 - *Exact endings.* With one card left the result is known: the player who draws it ends the round. The network's players and the Seer play that moment exactly instead of guessing.
 - *Repeating the loop.* Each round of games against the Oracle, with the Oracle scoring every position, made the next network stronger. On its own against the Oracle, v3 averaged −0.8 points a game, v4 +3.5 and v5 +6.9. The network learns most from the positions it reaches itself, and those change as it gets better.
+- *Guarding its own cards.* The network rates throwing away a card its own line could use a few points too high. When every move carried some risk, the Oracle's rule also stopped checking such discards. On the first version 3 page the Seer threw away a 9 and an 8 it could have played, and its opponent simply took them. Now such a discard must win by the card's full worth (the Oracle asks for half), even when every move is risky. Against the Oracle that cut these discards from 0.21 to 0.07 a round (160 games each; its opponent had taken 25 of the 33), with no loss of strength: +0.2 ± 0.7 points a game over 1,000 games on the same deals.
 - *Two independent code reviews* (16 and 15 AI reviewers, every finding reproduced before it counted) found the optimistic estimates and the end-of-round problem described above, and several smaller ones, before the long runs.
 
 **Results** (duplicate pairs against the 80-simulation Oracle unless noted):
@@ -158,7 +159,8 @@ Each network trained for several passes over its games with 5% of the games held
 | Network v4 on its own | 1,000 | won 55.9% ± 1.5%, by +3.5 ± 1.1 |
 | Seer with v4, with the Oracle's decision rule | 1,000 | won 56.4% ± 1.5%, by +6.8 ± 1.2 |
 | **Network v5 on its own** (no search, under a millisecond a move) | **1,000** | **won 57.8% ± 1.4%, by +6.9 ± 1.1** |
-| **Seer with v5, with the Oracle's decision rule** | **1,000** | **won 61.1% ± 1.4%, by +10.8 ± 1.1 (4.0 ± 1.6 better than v4 on the same deals)** |
+| Seer with v5, with the Oracle's decision rule | 1,000 | won 61.1% ± 1.4%, by +10.8 ± 1.1 (4.0 ± 1.6 better than v4 on the same deals) |
+| **Seer with v5, stricter about its own cards (the game's opponent)** | **1,000** | **won 61.9% ± 1.4%, by +11.1 ± 1.1** |
 | Seer with v3 against the Apprentice | 400 | won 76.5% ± 2.0%, by +23.9 ± 1.7 (the Oracle: 67.6%, +16.3) |
 | Network v3 on its own against the Apprentice | 400 | won 67.0% ± 2.3%, by +13.7 ± 1.7 |
 | Seer with v5 against the Apprentice | 402 | won 75.4% ± 2.0%, by +24.0 ± 1.5 |

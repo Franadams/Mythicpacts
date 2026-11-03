@@ -369,6 +369,11 @@ function netDraw(net, st, rnd = null, noise = 0) {
    settings.advice = 'net' or 'heuristic' adds the Oracle's decision rule (pickAdvice): risky discards and
    openings must clearly beat the best safe move, and the anchor move (the network's own choice, or the rules
    of thumb's) stands unless another is clearly better on the same worlds. */
+// The Oracle's decision rule, stricter about throwing away a card for its own line. The network rates those
+// discards a few points too high, and in testing the opponent picked up three in four of them. So such a discard
+// must win by the card's full worth on the line (the Oracle asks for half), and still by that much when every
+// option is risky.
+const SEER_RULES = { keepOwn: true, ownShare: 1 };
 function* netAnalyze(net, st, p, samples, seed, depth = 8, settings = {}) {
   const opts = st.phase === 'play'
     ? legalMoves(st)
@@ -409,7 +414,7 @@ function* netAnalyze(net, st, p, samples, seed, depth = 8, settings = {}) {
     const same = (a, b) => realmOf(a) === realmOf(b) && valueOf(a) === valueOf(b);
     anchor = options.find(o => st.phase === 'play' ? o.type === h.type && same(o.card, h.card) : o.src === h) || null;
   }
-  return { options, best: pickAdvice(options, margins, anchor).best, samples };
+  return { options, best: pickAdvice(options, margins, anchor, settings.rules || SEER_RULES).best, samples };
 }
 // The Seer's choice for the player to move (a play or discard, or a draw source in the draw phase).
 function netSearch(net, st, samples, seed, depth = 8, settings = {}) {

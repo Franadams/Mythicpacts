@@ -173,6 +173,24 @@ function position({ mine = [], myLines = {}, theirLines = {}, theirHand = [], kn
     eq(own(4).avoidedReason, 'own', 'and the reason is that our own line could use it');
     eq(own(6).best.j, 0, 'a 6-point edge (more than half of 10) is allowed');
   }
+  // The Seer's rules (SEER_RULES in nn/net.js): our own 10 must win by its full worth, and that still holds
+  // when every option is risky (here the alternatives are plays that skip cards).
+  {
+    const SEER = { keepOwn: true, ownShare: 1 };
+    const pick = (edge, safe, rules) => {
+      const margins = [base.map((x, i) => x + edge + (i % 2 ? 2 : -2)), base.slice(), base.map(x => x - 5)];
+      const o = [
+        { type: 'discard', card: N(0, 10), gift: null, own: { realm: 0, worth: 10 } },
+        { type: 'play', card: N(1, 9), gift: null, own: null, skip: safe ? null : { loss: 4 } },
+        { type: 'play', card: N(2, 9), gift: null, own: null, skip: { loss: 4 } },
+      ].map((x, j) => Object.assign(x, meanSe(margins[j]), { j })).sort((x, y) => y.mean - x.mean);
+      return pickAdvice(o, margins, o.find(x => x.j === 1), rules);
+    };
+    eq(pick(6, true, SEER).best.j, 1, 'the Seer keeps its own 10 when throwing it away wins by only 6 points');
+    eq(pick(6, false).best.j, 0, 'with no safe option the Oracle throws away its own 10 for a 6-point edge');
+    eq(pick(6, false, SEER).best.j, 1, 'the Seer plays instead');
+    eq(pick(12, false, SEER).best.j, 0, 'unless throwing it away wins by more than the 10 is worth');
+  }
   // No gift ahead; the safe play beats the anchor (safe discard) by 5 with no noise: clearly better.
   ({ r } = make(-30, 2));
   eq(r.best.j, 1, 'a clear improvement replaces the rules-of-thumb move');

@@ -666,7 +666,11 @@ function* analyze(st, p, samples, seed, settings = {}) {
 // The decision rule. options: sorted by mean, each with its index j into margins and its gift (or null);
 // margins[j]: the simulated final leads of option j, world by world (the same worlds for every option);
 // anchor: the option the rules of thumb would pick, or null.
-function pickAdvice(options, margins, anchor) {
+// rules (the Seer passes SEER_RULES): keepOwn holds discards that feed the opponent or throw away a card for our
+// own line to the same standard when no option is fully safe, measured against the best option that does neither;
+// ownShare replaces OWN_SHARE.
+function pickAdvice(options, margins, anchor, rules = {}) {
+  const keepOwn = !!rules.keepOwn, ownShare = rules.ownShare === undefined ? OWN_SHARE : rules.ownShare;
   // Paired comparison on the same simulated worlds: how much better is a than b, and how sure are we?
   const paired = (a, b) => meanSe(margins[a.j].map((x, i) => x - margins[b.j][i]));
   const clearlyBetter = (a, b, z, minEdge = 0) => { const d = paired(a, b); return d.mean > Math.max(z * d.se, minEdge); };
@@ -676,12 +680,25 @@ function pickAdvice(options, margins, anchor) {
   //    must be worth throwing away (the opponent will often pick it up to deny us).
   const risky = o => !!(o.gift || o.own || o.skip || o.open);
   const bestSafe = options.find(o => !risky(o));
-  const allowed = o => {
-    if (o.own && o.own.next) return false;   // playing that card can only add points, so never throw it away
-    if (!risky(o) || !bestSafe) return true;
+  const keeper = !bestSafe && keepOwn ? options.find(o => !o.gift && !o.own) || null : null;
+  const discardRule = o => {
     let z = 0, minEdge = 0;
     if (o.gift) { const rule = GIFT_RULES[o.gift.kind]; z = rule.z; minEdge = rule.minEdge; }
-    if (o.own) { z = Math.max(z, OWN_Z); minEdge = Math.max(minEdge, OWN_MIN, OWN_SHARE * o.own.worth); }
+    if (o.own) { z = Math.max(z, OWN_Z); minEdge = Math.max(minEdge, OWN_MIN, ownShare * o.own.worth); }
+    return { z, minEdge };
+  };
+  const allowed = o => {
+    if (o.own && o.own.next) return false;   // playing that card can only add points, so never throw it away
+    if (!risky(o)) return true;
+    if (!bestSafe) {
+      // Every option carries some risk (late in a round with a hand of high cards, say). Plays that skip cards
+      // or open a line are then fair game, but a discard that feeds the opponent or throws away a card for our
+      // own line must still clearly beat the best option that does neither.
+      if (!keeper || !(o.gift || o.own)) return true;
+      const { z, minEdge } = discardRule(o);
+      return clearlyBetter(o, keeper, z, minEdge);
+    }
+    let { z, minEdge } = discardRule(o);
     if (o.skip) { z = Math.max(z, SKIP_Z); minEdge = Math.max(minEdge, SKIP_SHARE * o.skip.loss); }
     // An opening the rules of thumb would also make is trusted; any other must clearly earn its 20 points.
     if (o.open && !(anchor && anchor.type === 'play' && anchor.open && realmOf(anchor.card) === o.open.realm)) {
@@ -692,7 +709,7 @@ function pickAdvice(options, margins, anchor) {
   const top = options.find(allowed);
   // 2. The default is the rules-of-thumb move, or the best non-gift if that move is a gift that is
   //    not allowed. The top allowed move replaces it only if it is clearly better.
-  const fallback = anchor && allowed(anchor) ? anchor : bestSafe;
+  const fallback = anchor && allowed(anchor) ? anchor : bestSafe || keeper;
   let best = top;
   if (fallback && best !== fallback && !clearlyBetter(best, fallback, ANCHOR_Z)) best = fallback;
 

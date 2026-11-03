@@ -376,3 +376,4 @@ if (typeof OPEN_PER_LINE !== 'undefined') {
 }
 
 print(failures ? `${failures} test(s) failed` : 'All AI tests passed');
+if (failures) throw new Error('tests failed');   // non-zero exit for run.sh

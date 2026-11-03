@@ -76,3 +76,4 @@ if (wins < 190) { failures++; print(`FAIL Apprentice should crush random play: w
 }
 
 print(failures ? `${failures} test(s) failed` : 'All engine tests passed');
+if (failures) throw new Error('tests failed');   // non-zero exit for run.sh

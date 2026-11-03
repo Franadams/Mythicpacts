@@ -9,3 +9,6 @@ dist/
 
 # Temporary in-browser test tools
 .sim/
+
+# Neural-network training data (recreate with nn/selfplay.js; hundreds of megabytes)
+nn/data/

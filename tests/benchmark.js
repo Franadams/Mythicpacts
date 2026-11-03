@@ -7,6 +7,7 @@
      $JSC src/engine.js tests/benchmark.js -- task=strength a=oracle b=old:oracle old=path/to/engine.js games=400
      $JSC src/engine.js tests/benchmark.js -- task=gifts positions=2000 old=path/to/engine.js
      $JSC src/engine.js tests/benchmark.js -- task=timing
+     $JSC src/engine.js nn/net.js tests/benchmark.js -- task=strength a=seer b=oracle seer=nn/weights.json
    Options:
      seed=N        first deal (runs with different seeds are independent)
      from=N        task=gifts: start at position N of that seed's sequence, so one run can be split in parts
@@ -14,7 +15,14 @@
      old=FILE      a second engine to compare against, for example a saved copy of an older version;
                    policies from it are written old:oracle and old:apprentice
      json=FILE     also save the raw per-game or per-position results
-     merge=F1,F2   combine saved results from parallel runs instead of playing
+     merge=F1,F2   combine saved results from parallel runs instead of playing (they must be the same
+                   task and players, and no deal may appear twice)
+   With nn/net.js loaded too, the neural-network players: net (net=FILE, chooses each move with the
+   network alone), net2 (the same with net2=FILE), and seer and seer2 (seer=FILE / seer2=FILE: the
+   Oracle's search with the network judging each simulated future after depth=N decisions, default 8;
+   advice=net or advice=heuristic adds the Oracle's decision rule, anchored on the network's or the rules
+   of thumb's move; seersamples=N gives the Seer its own number of simulated deals, so it can face an
+   Oracle with more, say).
 
    task=strength plays duplicate pairs: each deal is played twice with the seats swapped, so
    the luck of the deal cancels out. Standard errors are computed over pairs.
@@ -45,7 +53,7 @@ function runAnalysis(E, st, samples, seed) {
   return x.value;
 }
 
-// "oracle", "apprentice", "old:oracle", "old:apprentice"
+// "oracle", "apprentice", "old:oracle", "old:apprentice", and with nn/net.js loaded "net" / "net2"
 function policy(spec, samples) {
   const [eng, kind] = spec.indexOf(':') > 0 ? spec.split(':') : ['new', spec];
   const E = engines[eng];
@@ -55,7 +63,31 @@ function policy(spec, samples) {
     move: (st, rnd) => { const b = runAnalysis(E, st, samples, (rnd() * 4294967296) >>> 0).best; return { type: b.type, card: b.card }; },
     draw: (st, rnd) => runAnalysis(E, st, samples, (rnd() * 4294967296) >>> 0).best.src,
   };
+  // The neural-network player (nn/net.js loaded too): net uses net=FILE, net2 uses net2=FILE.
+  if (kind === 'net' || kind === 'net2') {
+    if (typeof netMove !== 'function' || !args[kind]) throw new Error(`${kind} needs nn/net.js loaded and ${kind}=FILE`);
+    const W = netFromJSON(JSON.parse(readFile(args[kind])));
+    return { move: st => netMove(W, st), draw: st => netDraw(W, st) };
+  }
+  if (kind === 'seer' || kind === 'seer2') {
+    if (typeof netSearch !== 'function' || !args[kind]) throw new Error(`${kind} needs nn/net.js loaded and ${kind}=FILE`);
+    const W = netFromJSON(JSON.parse(readFile(args[kind]))), depth = +(args.depth || 8);
+    const n = +(args.seersamples || samples);
+    const pick = (st, rnd) => netSearch(W, st, n, (rnd() * 4294967296) >>> 0, depth, { advice: args.advice });
+    return { move: (st, rnd) => { const b = pick(st, rnd); return { type: b.type, card: b.card }; }, draw: (st, rnd) => pick(st, rnd).src };
+  }
   throw new Error(`Unknown policy ${spec}`);
+}
+
+// What else decides how the players play: weight files (by content, since training rewrites them in place),
+// the Seer's depth and decision rule, and the old engine. Saved with the results so merge= can check it.
+function contentHash(text) { let h = 2166136261; for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619); return (h >>> 0).toString(16); }
+function playerConfig() {
+  const c = {};
+  for (const k of ['net', 'net2', 'seer', 'seer2']) if (args[k]) c[k] = `${args[k]}#${contentHash(readFile(args[k]))}`;
+  if (c.seer || c.seer2) { c.depth = +(args.depth || 8); c.advice = args.advice || null; c.seersamples = +(args.seersamples || 0) || null; }
+  if (args.old) c.old = `${args.old}#${contentHash(readFile(args.old))}`;
+  return c;
 }
 
 function mean(a) { return a.reduce((s, x) => s + x, 0) / a.length; }
@@ -66,15 +98,18 @@ function se(a) {
 const f1 = x => x.toFixed(1), f3 = x => x.toFixed(3);
 
 // ---- strength: duplicate pairs ----
+// Two deterministic players (networks, say) can trade the same cards between the discard piles forever, so a
+// game that runs past 500 decisions (a real round takes 90-250) ends there and is scored as it stands (the
+// lines can't change inside such a loop), and the report says how many did.
 function playGame(players, first, dealSeed) {
   const st = newRound(first, makeRng(dealSeed));
   const rnd = makeRng((dealSeed ^ 0x5bd1e995) >>> 0);   // seeds for the players' own simulations
-  while (!st.over) {
+  for (let steps = 0; !st.over && steps < 500; steps++) {
     const pl = players[st.turn];
     if (st.phase === 'play') applyMove(st, pl.move(st, rnd));
     else applyDraw(st, pl.draw(st, rnd));
   }
-  return [playerTotal(st, 0), playerTotal(st, 1)];
+  return [playerTotal(st, 0), playerTotal(st, 1), !st.over];
 }
 
 function strength() {
@@ -86,9 +121,9 @@ function strength() {
     const dealSeed = (seed0 * 1000003 + i) >>> 0, first = i % 2;
     const g1 = playGame([A, B], first, dealSeed);   // A in seat 0
     const g2 = playGame([B, A], first, dealSeed);   // same deal, A in seat 1
-    rows.push({ deal: dealSeed, a: [g1[0], g2[1]], b: [g1[1], g2[0]] });
+    rows.push({ deal: dealSeed, a: [g1[0], g2[1]], b: [g1[1], g2[0]], capped: [g1[2], g2[2]] });
   }
-  return { task: 'strength', a: args.a || 'oracle', b: args.b || 'apprentice', samples, rows, seconds: (Date.now() - t0) / 1000 };
+  return { task: 'strength', a: args.a || 'oracle', b: args.b || 'apprentice', samples, config: playerConfig(), rows, seconds: (Date.now() - t0) / 1000 };
 }
 
 function reportStrength(res) {
@@ -102,6 +137,11 @@ function reportStrength(res) {
   print(`${res.a} vs ${res.b}: ${games} games (${rows.length} duplicate pairs), ${res.samples} samples per Oracle decision`);
   print(`  ${res.a} won ${wins}, tied ${ties}, lost ${games - wins - ties}: win share ${f3(mean(pairWin))} +- ${f3(se(pairWin))} (ties count half)`);
   print(`  average score ${f1(mean(rows.flatMap(r => r.a)))} to ${f1(mean(rows.flatMap(r => r.b)))}; margin ${f1(mean(pairMargin))} +- ${f1(se(pairMargin))} per game`);
+  const capped = rows.filter(r => r.capped && (r.capped[0] || r.capped[1]));
+  if (capped.length) {
+    const rest = rows.filter(r => capped.indexOf(r) < 0).map(r => (r.a[0] - r.b[0] + r.a[1] - r.b[1]) / 2);
+    print(`  ${capped.length} pairs had a game stopped at 500 decisions and scored as it stood; without them the margin is ${rest.length > 1 ? `${f1(mean(rest))} +- ${f1(se(rest))}` : 'unknown'}`);
+  }
 }
 
 // ---- gifts: how often the advice hands the opponent a usable card ----
@@ -133,7 +173,7 @@ function gifts() {
     }
     rows.push(row);
   }
-  return { task: 'gifts', samples, engines: Object.keys(engines), rows, seconds: (Date.now() - t0) / 1000 };
+  return { task: 'gifts', samples, engines: Object.keys(engines), config: playerConfig(), rows, seconds: (Date.now() - t0) / 1000 };
 }
 
 function reportGifts(res) {
@@ -171,7 +211,17 @@ function timing() {
 }
 
 if (args.merge) {
-  const parts = args.merge.split(',').map(f => JSON.parse(readFile(f)));
+  const files = args.merge.split(','), parts = files.map(f => JSON.parse(readFile(f))), deals = new Set();
+  parts.forEach((p, i) => {
+    for (const k of ['task', 'a', 'b', 'samples', 'config', 'engines']) {
+      const x = JSON.stringify(p[k]), y = JSON.stringify(parts[0][k]);
+      if (x !== y) throw new Error(`${files[i]} has ${k}=${x}, not ${y} like ${files[0]}`);
+    }
+    for (const r of p.rows) {
+      if (deals.has(r.deal)) throw new Error(`deal ${r.deal} appears twice (again in ${files[i]}): were two runs given the same seed?`);
+      deals.add(r.deal);
+    }
+  });
   const res = Object.assign({}, parts[0], { rows: parts.flatMap(p => p.rows), seconds: parts.reduce((s, p) => s + p.seconds, 0) });
   if (res.task === 'strength') reportStrength(res); else reportGifts(res);
 } else if (TASK === 'timing') timing();

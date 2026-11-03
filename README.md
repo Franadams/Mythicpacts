@@ -38,6 +38,7 @@ What's new in version 2:
 | `src/sound.js` | The sound effects, synthesised with the Web Audio API. |
 | `src/online.js` | Online play for two devices (switched off for now). |
 | `tests/` | Tests you can run with `tests/run.sh` (no installs: it uses macOS's built-in JavaScriptCore), plus `calibrate.js` and `benchmark.js` for the measurements below. |
+| `nn/` | The neural-network experiment (not in the game yet): `net.js` (the network, its players and the Seer), `selfplay.js` (training games), `train.js`, and the trained weights `v2s1.json` (called v2 below), `v3.json`, `v4.json` and `v5.json` (v5 is the strongest). Training games, logs and test results go in `nn/data/`, which is not in git. See *The neural network* below. |
 | `prepare_art.py` | Cuts the art sheets in `art/` into cards, crystals and portraits in `assets/`. |
 | `build.py` | Packs everything into one self-contained file, `dist/mythic-pacts.html` (about 7 MB). |
 
@@ -106,3 +107,88 @@ To make the shareable single file, run `python3 build.py`.
 - *Best move:* the average final lead for each move, its standard error, and a red "helps Oracle" tag on discards the opponent could use. When the advice passes over a higher-scoring move, it says why.
 
 This is the same kind of reasoning used to price a sports market: count what you know, model what the other side's behaviour reveals, simulate what you don't know, and only act when the edge is bigger than the noise.
+
+## The neural network (experimental)
+
+The Oracle plays every simulated future to the end with the rules of thumb. The question was whether a neural network, trained on the Oracle's own games, could judge positions better, and then play better.
+
+**What the network is.** A small network (about 17,000 weights, pure JavaScript, no GPU) that looks at the table from one player's side and predicts how far ahead that player will finish the round. It sees only what that player could see: where each card is (in its hand, on either player's lines, in a discard pile, unseen, or known to be in the opponent's hand because they took it from a pile), a few summary numbers per realm (line score, cards that still fit, cards left), and whose turn it is. The five realms are read by the same small sub-network and added up, because the realms are interchangeable; a pattern learned in one realm applies to all five.
+
+**How it plays.**
+- *On its own:* for each legal move it imagines the position afterwards and picks the one it rates highest. Well under a millisecond a move.
+- *The Seer:* the Oracle's search with the network inside it. Like the Oracle, it deals 80 possible worlds and tries every move in each, but each simulated future is cut short after 8 decisions (a play or a draw each, so about two turns per player) and the network judges where it got to. The Oracle's cautious decision rule then picks the move, anchored on the network's own choice. About as fast as the Oracle.
+
+**How it was trained** (`nn/selfplay.js`, `nn/train.js`):
+1. 10,000 Oracle-vs-Oracle games: 1.07 million positions. For every play or discard the Oracle considered, its estimate of the final lead was stored too (7.9 million estimates).
+2. The network learned from both: how each game really ended, and the Oracle's estimate for every play or discard it weighed.
+3. The first network trained on both (v1b) then played 6,000 games against the Oracle, and the Oracle scored every position, including the network's own (an "expert iteration" round: the learner visits its own positions and the expert says what each move there was worth).
+4. Network v3 was trained on all 16,000 games, starting from v2 (the second network, trained on the first 10,000 with the fixes below).
+5. Another round: the Seer with v3 played 4,000 games against the Oracle, scored the same way, and v4 was trained on all 20,000 games, starting from v3.
+6. And one more: the Seer with v4 played 4,000 games against the Oracle, and v5 (the current network, `nn/v5.json`) was trained on all 24,000 games, starting from v4.
+
+Each network trained for several passes over its games with 5% of the games held back, and the pass that predicted the held-back games best was kept (pass 2 of 6 for v3 and v4, pass 1 of 6 for v5).
+
+**What made the difference.**
+- *Learning from final scores alone fails.* A network trained only on how games ended started 4.4 lines a round but put only 12 cards on them in all, so most of those lines finished below zero. It lost 99% of its games to the Oracle and 98% to the Apprentice. In good players' games a started line usually means a strong hand, so it learned "started lines go with winning". The Oracle's estimates for the moves nobody played (starting a weak line, say) fixed that.
+- *The Oracle's estimates run optimistic*, most likely because the opponents it imagines hold weaker hands than real ones keep. Its estimates came out higher than the real result by about 10 points through the middle of the round, peaking near 12 with 12 cards left, and by about 1 at the start and end. Training measures that gap for each number of cards left and takes it off.
+- *Exact endings.* With one card left the result is known: the player who draws it ends the round. The network's players and the Seer play that moment exactly instead of guessing.
+- *Repeating the loop.* Each round of games against the Oracle, with the Oracle scoring every position, made the next network stronger. On its own against the Oracle, v3 averaged −0.8 points a game, v4 +3.5 and v5 +6.9. The network learns most from the positions it reaches itself, and those change as it gets better.
+- *Two independent code reviews* (16 and 15 AI reviewers, every finding reproduced before it counted) found the optimistic estimates and the end-of-round problem described above, and several smaller ones, before the long runs.
+
+**Results** (duplicate pairs against the 80-simulation Oracle unless noted):
+
+| Player | Games | Result |
+|---|---|---|
+| First network, trained on final scores only | 402 | won 0.9%, lost by 106 points a game |
+| First network, with the Oracle's estimates (v1b) | 400 | won 42.8%, by −12.8 ± 2.1 points a game |
+| Network v2 on its own (estimates de-biased, exact endings) | 400 | won 43.1% ± 2.4%, by −5.9 ± 2.1 |
+| Network v3 on its own (after the expert-iteration round) | 400 | won 52.1% ± 2.3%, by −0.8 ± 1.9: level with the Oracle |
+| Seer with v2, picking the highest average | 400 | won 47.4%, by −3.3 ± 2.0 |
+| Seer with v2, with the Oracle's decision rule | 1,000 | won 52.9% ± 1.5%, by +3.3 ± 1.2 |
+| Seer with v3, with the Oracle's decision rule | 1,000 | won 57.4% ± 1.5%, by +5.4 ± 1.2 points a game |
+| Network v4 on its own | 1,000 | won 55.9% ± 1.5%, by +3.5 ± 1.1 |
+| Seer with v4, with the Oracle's decision rule | 1,000 | won 56.4% ± 1.5%, by +6.8 ± 1.2 |
+| **Network v5 on its own** (no search, under a millisecond a move) | **1,000** | **won 57.8% ± 1.4%, by +6.9 ± 1.1** |
+| **Seer with v5, with the Oracle's decision rule** | **1,000** | **won 61.1% ± 1.4%, by +10.8 ± 1.1 (4.0 ± 1.6 better than v4 on the same deals)** |
+| Seer with v3 against the Apprentice | 400 | won 76.5% ± 2.0%, by +23.9 ± 1.7 (the Oracle: 67.6%, +16.3) |
+| Network v3 on its own against the Apprentice | 400 | won 67.0% ± 2.3%, by +13.7 ± 1.7 |
+| Seer with v5 against the Apprentice | 402 | won 75.4% ± 2.0%, by +24.0 ± 1.5 |
+| Network v5 on its own against the Apprentice | 402 | won 70.6% ± 2.2%, by +17.3 ± 1.5 |
+| Seer with v3 (80 simulations) against an Oracle with 320 | 402 | won 47.4% ± 2.3%, by −3.2 ± 1.8: an Oracle given four times the work still edges it |
+| Seer with v3, both at 320 simulations | 400 | won 52.0% ± 2.3%, by +2.1 ± 1.9 |
+| Seer with v4 (80 simulations) against an Oracle with 320 | 402 | won 53.2% ± 2.0%, by +2.2 ± 1.8 (5.5 ± 2.4 better than v3 on the same deals) |
+| Network v4 on its own against an Oracle with 320 | 402 | won 49.5% ± 2.2%, by −1.8 ± 1.8: level |
+| **Seer with v5 (80 simulations) against an Oracle with 320** | **804** | **won 55.2% ± 1.6%, by +5.2 ± 1.3: it beats an Oracle doing four times the work** |
+| Network v5 on its own against an Oracle with 320 | 804 | won 52.0% ± 1.6%, by +2.3 ± 1.3 |
+| Seer looking 2, 4 or 12 decisions ahead instead of 8 (with v2) | 200–400 each | none better than 8; 4 clearly weaker, 2 and 12 within noise |
+
+**How long the runs took** on a 6-core Mac (pure JavaScript, one core per job):
+
+| Run | Time |
+|---|---|
+| 10,000 Oracle-vs-Oracle training games | 1 h 41 min on 6 cores |
+| 6,000 network-vs-Oracle games, every position scored by the Oracle | 1 h 1 min on 5 cores |
+| 4,000 Seer-vs-Oracle games, every position scored by the Oracle | 49–52 min on 5 cores |
+| Training one network on 16,000–24,000 games (6 passes) | 25–45 min on one core |
+| 1,000 Seer-vs-Oracle test games | about 8 min on 5 cores (five 200-game runs at once) |
+
+Training needs about 1.3 GB of memory per job, so on an 8 GB machine with other apps open, run one training job at a time.
+
+To reproduce, from the project folder (`JSC` is macOS's built-in JavaScript engine; each step was split into parallel jobs with consecutive seeds):
+```
+JSC=/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc
+# Oracle-vs-Oracle games (40 jobs like this, seeds 10001-10040)
+$JSC src/engine.js nn/net.js nn/selfplay.js -- games=250 seed=10001 a=oracle b=oracle out=nn/data/oracle-10001.bin
+# v2, from scratch, on those games
+$JSC src/engine.js nn/net.js nn/train.js -- data=nn/data/oracle-10001.bin,... out=nn/v2s1.json epochs=10 qkeep=0.25
+# A round against the Oracle, every position scored by it (20 jobs; the original round used v1b, whose weights no longer load)
+$JSC src/engine.js nn/net.js nn/selfplay.js -- games=300 seed=20001 a=net b=oracle net=nn/v2s1.json label=oracle out=nn/data/r2-20001.bin
+# The next network, starting from the last one, on all games so far
+$JSC src/engine.js nn/net.js nn/train.js -- data=nn/data/oracle-10001.bin,...,nn/data/r2-20001.bin,... init=nn/v2s1.json out=nn/v3.json epochs=6 lr=0.0005 qkeep=0.25
+# Later rounds use the Seer (20 jobs of 200 games), then train v4 from v3 and v5 from v4 the same way
+$JSC src/engine.js nn/net.js nn/selfplay.js -- games=200 seed=30001 a=seer b=oracle net=nn/v3.json depth=8 advice=net label=oracle out=nn/data/r3-seer-30001.bin
+# Test: five 200-game jobs (seeds 1-5), then merge them
+$JSC src/engine.js nn/net.js tests/benchmark.js -- task=strength a=seer b=oracle seer=nn/v5.json depth=8 advice=net games=200 seed=1 json=seer-1.json
+$JSC src/engine.js nn/net.js tests/benchmark.js -- merge=seer-1.json,seer-2.json,seer-3.json,seer-4.json,seer-5.json
+```
+

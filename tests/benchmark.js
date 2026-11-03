@@ -22,7 +22,8 @@
    Oracle's search with the network judging each simulated future after depth=N decisions, default 8;
    advice=net or advice=heuristic adds the Oracle's decision rule, anchored on the network's or the rules
    of thumb's move; seersamples=N gives the Seer its own number of simulated deals, so it can face an
-   Oracle with more, say).
+   Oracle with more, say; seerdeny=1 lets the players in the Seer's simulated futures pick up a card just
+   to keep it from the other player, as they did up to engine seer-v5-2026-11-03-keepown).
 
    task=strength plays duplicate pairs: each deal is played twice with the seats swapped, so
    the luck of the deal cancels out. Standard errors are computed over pairs.
@@ -73,7 +74,8 @@ function policy(spec, samples) {
     if (typeof netSearch !== 'function' || !args[kind]) throw new Error(`${kind} needs nn/net.js loaded and ${kind}=FILE`);
     const W = netFromJSON(JSON.parse(readFile(args[kind]))), depth = +(args.depth || 8);
     const n = +(args.seersamples || samples);
-    const pick = (st, rnd) => netSearch(W, st, n, (rnd() * 4294967296) >>> 0, depth, { advice: args.advice });
+    const deny = args.seerdeny === undefined ? undefined : args.seerdeny === '1';
+    const pick = (st, rnd) => netSearch(W, st, n, (rnd() * 4294967296) >>> 0, depth, { advice: args.advice, deny });
     return { move: (st, rnd) => { const b = pick(st, rnd); return { type: b.type, card: b.card }; }, draw: (st, rnd) => pick(st, rnd).src };
   }
   throw new Error(`Unknown policy ${spec}`);
@@ -85,7 +87,8 @@ function contentHash(text) { let h = 2166136261; for (let i = 0; i < text.length
 function playerConfig() {
   const c = {};
   for (const k of ['net', 'net2', 'seer', 'seer2']) if (args[k]) c[k] = `${args[k]}#${contentHash(readFile(args[k]))}`;
-  if (c.seer || c.seer2) { c.depth = +(args.depth || 8); c.advice = args.advice || null; c.seersamples = +(args.seersamples || 0) || null; }
+  // seerdeny is always recorded, so results from before it existed (when the Seer's futures always denied) won't merge with newer ones.
+  if (c.seer || c.seer2) { c.depth = +(args.depth || 8); c.advice = args.advice || null; c.seersamples = +(args.seersamples || 0) || null; c.seerdeny = args.seerdeny === '1'; }
   if (args.old) c.old = `${args.old}#${contentHash(readFile(args.old))}`;
   return c;
 }

@@ -373,7 +373,9 @@ function heuristicMove(st, rnd, noise) {
   return { type: 'discard', card: worst };
 }
 
-function heuristicDraw(st, rnd, noise) {
+// Draw from a discard pile whose top card helps one of p's lines, or else from the deck. With deny (the default)
+// it also takes a card that fits a line the opponent has started, just to keep it from them.
+function heuristicDraw(st, rnd, noise, deny = true) {
   const p = st.turn, mine = st.exp[p], opp = st.exp[p ^ 1];
   const live = liveMap(st), mask = handMask(st.hands[p]);
   let bestSrc = -1, bestVal = 1 + (noise ? (rnd() - 0.5) * noise : 0);
@@ -391,7 +393,7 @@ function heuristicDraw(st, rnd, noise) {
       }
     }
     const op = opp[r];
-    if (op.length && v && canPlay(op, c)) val = Math.max(val, 0) + Math.max(0, 2.5 - 0.5 * (v - Math.max(topValue(op), 1) - 1));
+    if (deny && op.length && v && canPlay(op, c)) val = Math.max(val, 0) + Math.max(0, 2.5 - 0.5 * (v - Math.max(topValue(op), 1) - 1));
     if (noise) val += (rnd() - 0.5) * noise;
     if (val > bestVal) { bestVal = val; bestSrc = r; }
   }

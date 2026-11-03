@@ -208,6 +208,11 @@ function midGame(seed, turns) {
   const res = (() => { const g = netAnalyze(net, cloneState(st), st.turn, 80, 3, 8, { advice: 'net' }); let x; while (!(x = g.next()).done); return x.value; })();
   ok(legalMoves(st).some(m => m.type === res.best.type && m.card === res.best.card), 'the Seer as the game runs it plays a legal move');
   ok(res.options.length === legalMoves(st).length, 'and weighs every legal move');
+  // Nobody picks up a card just to deny it in the Seer's simulated futures (SEER_DENY): the default is deny off.
+  eq(SEER_DENY, false, "nobody denies in the Seer's simulated futures");
+  const means = settings => { const g = netAnalyze(net, cloneState(st), st.turn, 16, 5, 4, settings); let x; while (!(x = g.next()).done); return x.value.options.map(o => o.mean).join(); };
+  eq(means({}), means({ deny: false }), 'the Seer searches with deny off by default');
+  ok(means({}) !== means({ deny: true }), 'and deny: true changes its simulated futures');
 }
 
 print(failures ? `${failures} test(s) failed` : 'All neural-network tests passed');

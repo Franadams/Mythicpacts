@@ -374,11 +374,18 @@ function netDraw(net, st, rnd = null, noise = 0) {
 // must win by the card's full worth on the line (the Oracle asks for half), and still by that much when every
 // option is risky.
 const SEER_RULES = { keepOwn: true, ownShare: 1 };
+// In the Seer's simulated futures nobody picks up a card just to keep it from the other player (settings.deny = true
+// brings that back). The rules of thumb take a card that fits just above the top of the other player's line, which made
+// throwing away a card for its own line look like good bait: in a recorded round the simulated opponent took the Seer's
+// Dryad 5 in 97% of futures. In the recorded rounds the player took such a card at 5 of 37 chances, where the rules of
+// thumb would have taken it at 36, so the bait mostly just lost cards. The player did take 3 of the 5 high ones (7 to 9);
+// SEER_RULES still guards those, since throwing one away must win by its full worth.
+const SEER_DENY = false;
 function* netAnalyze(net, st, p, samples, seed, depth = 8, settings = {}) {
   const opts = st.phase === 'play'
     ? legalMoves(st)
     : (st.deck.length === 1 ? [-1] : legalDraws(st)).map(src => ({ type: 'draw', src }));
-  const k = opts.length;
+  const k = opts.length, deny = settings.deny === undefined ? SEER_DENY : !!settings.deny;
   const margins = opts.map(() => new Float64Array(samples));
   const weights = opponentWeights(st, p, settings.handWeights);
   const master = makeRng(seed);
@@ -391,7 +398,7 @@ function* netAnalyze(net, st, p, samples, seed, depth = 8, settings = {}) {
       for (let d = 0; !s.over && (d < depth || s.deck.length === 1); d++) {
         const last = s.deck.length === 1;
         if (s.phase === 'play') applyMove(s, last ? bestLastMove(s) : heuristicMove(s, rnd, ROLLOUT_NOISE));
-        else applyDraw(s, last ? -1 : heuristicDraw(s, rnd, ROLLOUT_NOISE));
+        else applyDraw(s, last ? -1 : heuristicDraw(s, rnd, ROLLOUT_NOISE, deny));
       }
       margins[j][i] = s.over ? playerTotal(s, p) - playerTotal(s, p ^ 1) : netLead(net, s, p);
     }

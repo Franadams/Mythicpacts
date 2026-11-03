@@ -191,6 +191,14 @@ function position({ mine = [], myLines = {}, theirLines = {}, theirHand = [], kn
     eq(pick(6, false, SEER).best.j, 1, 'the Seer plays instead');
     eq(pick(12, false, SEER).best.j, 0, 'unless throwing it away wins by more than the 10 is worth');
   }
+  // The rules of thumb take a card that only fits the opponent's line, to keep it from them, unless deny is off
+  // (as in the Seer's simulated futures, SEER_DENY in nn/net.js).
+  {
+    const st = position({ mine: [N(0, 5), N(0, 6), N(1, 6), N(1, 7), N(3, 8), N(4, 9), N(4, 4)], theirLines: { 2: [N(2, 2), N(2, 3)] },
+      piles: { 2: [N(2, 5)] }, deckSize: 20, phase: 'draw' });
+    eq(heuristicDraw(st, null, 0), 2, 'the rules of thumb pick up a Dryad 5 that fits only the opponent\'s Dryad line');
+    eq(heuristicDraw(st, null, 0, false), -1, 'with deny off they draw from the deck instead');
+  }
   // No gift ahead; the safe play beats the anchor (safe discard) by 5 with no noise: clearly better.
   ({ r } = make(-30, 2));
   eq(r.best.j, 1, 'a clear improvement replaces the rules-of-thumb move');
